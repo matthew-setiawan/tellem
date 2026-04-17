@@ -107,7 +107,7 @@ textarea.form-input { resize: vertical; }
 .sidebar-user-name { font-size: 13px; color: rgba(255,255,255,0.7); }
 .sidebar-logout { background: none; border: none; color: rgba(255,255,255,0.4); cursor: pointer; padding: 4px; transition: color 0.15s; }
 .sidebar-logout:hover { color: white; }
-.app-main { flex: 1; overflow-y: auto; background: var(--bg); }
+.app-main { flex: 1; overflow-y: auto; background: var(--bg); min-width: 0; height: 100vh; }
 
 /* ── Page content ── */
 .page-content { padding: 32px; max-width: 1200px; margin: 0 auto; }
@@ -201,6 +201,11 @@ textarea.form-input { resize: vertical; }
 }
 .file-upload-box:hover { border-color: var(--teal); }
 
+/* ── Conversations layout ── */
+.conversations-layout { height: 100%; overflow: hidden; }
+.conversations-ai-panel { flex-shrink: 0; }
+.conversations-feed { min-width: 0; }
+
 /* ── Chat layout ── */
 .chat-layout { display: flex; height: calc(100vh); }
 .chat-sidebar { width: 300px; border-right: 1px solid var(--border); background: var(--card); display: flex; flex-direction: column; }
@@ -268,6 +273,11 @@ textarea.form-input { resize: vertical; }
 .sidebar-close-btn { display: none; }
 .mobile-back-btn { display: none !important; }
 
+/* ── Small desktop / tablet breakpoint ── */
+@media (max-width: 1024px) {
+  .conversations-ai-panel { width: 280px !important; min-width: 240px !important; }
+}
+
 /* ── Mobile breakpoint ── */
 @media (max-width: 768px) {
   .mobile-header { display: flex; }
@@ -292,8 +302,8 @@ textarea.form-input { resize: vertical; }
   .outbound-main.mobile-hidden { display: none !important; }
 
   /* Conversations page */
-  .conversations-layout { flex-direction: column; }
-  .conversations-ai-panel { width: 100% !important; border-right: none !important; }
+  .conversations-layout { flex-direction: column; height: auto !important; }
+  .conversations-ai-panel { width: 100% !important; min-width: 0 !important; border-right: none !important; }
   .conversations-ai-panel.mobile-hidden { display: none !important; }
   .conversations-feed.mobile-hidden { display: none !important; }
 

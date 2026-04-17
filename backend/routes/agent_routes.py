@@ -6,7 +6,10 @@ questions, and sends outreach messages on confirmation.
 
 import json
 import re
+import threading
+import time
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from bson import ObjectId
 from flask import Blueprint, Response, current_app, jsonify, request, g, stream_with_context
@@ -15,16 +18,31 @@ import config
 from middleware.auth_middleware import require_auth
 from modules.db import (
     get_agent_threads_collection,
+    get_message_logs_collection,
     get_outbound_conversations_collection,
     get_settings_collection,
+    get_users_collection,
 )
 from modules.llm import query_perplexity_chat
 from modules.outreach_search import search_contacts
 from modules.messaging import send_message
+from modules.demo import is_demo_jid, generate_fake_contacts, generate_fake_reply
 
 agent_bp = Blueprint("agent", __name__)
 
 # ── Helpers ──────────────────────────────────────────
+
+_BRACKET_PLACEHOLDER_RE = re.compile(r'\[(?:Your |My |Sender |Agent )?(?:Name|Company|Title|Phone|Email|Business|Signature)[^\]]*\]', re.IGNORECASE)
+
+def _clean_message(text, sender_name=""):
+    """Strip any leftover bracket/brace placeholders the LLM may have produced."""
+    text = _BRACKET_PLACEHOLDER_RE.sub(sender_name or "", text)
+    text = text.replace("Best regards,\n", "").replace("Best regards", "")
+    text = text.replace("Kind regards,\n", "").replace("Kind regards", "")
+    text = text.replace("Warm regards,\n", "").replace("Warm regards", "")
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
@@ -39,16 +57,33 @@ def _serialize(doc):
     return doc
 
 
-def _get_test_contact_if_testing(user_id):
+def _get_sender_info(user_id):
+    """Fetch the sender's display name and business name from their profile."""
+    try:
+        users = get_users_collection()
+        user = users.find_one({"_id": ObjectId(user_id)}, {"username": 1, "business_name": 1})
+        if user:
+            return user.get("username", ""), user.get("business_name", "")
+    except Exception:
+        pass
+    return "", ""
+
+
+def _get_test_settings(user_id):
+    """Return (contacts_override, is_testing, is_demo) based on user's test settings."""
     col = get_settings_collection()
     settings = col.find_one({"user_id": user_id})
     if not settings or not settings.get("testing_mode"):
-        return None
+        return None, False, False
+
+    if settings.get("demo_leads"):
+        return "demo", True, True
+
     tc = settings.get("test_contact") or {}
     whatsapp = (tc.get("whatsapp") or "").strip()
     if not whatsapp:
-        return None
-    return [{
+        return None, False, False
+    contacts = [{
         "name": tc.get("name") or "Test Contact",
         "title": "Test Contact",
         "company": "Testing Mode",
@@ -60,6 +95,7 @@ def _get_test_contact_if_testing(user_id):
         "summary": "This is your test contact. All searches return this number while testing mode is enabled.",
         "source": "testing",
     }]
+    return contacts, True, False
 
 
 AGENT_SYSTEM_PROMPT = """\
@@ -343,18 +379,21 @@ def send_message_to_thread(thread_id):
         search_query = parsed.get("search_query", user_text)
         search_limit = min(int(parsed.get("search_limit", 5)), 10)
 
-        test_contacts = _get_test_contact_if_testing(user_id)
-        if test_contacts is not None:
-            contacts = test_contacts
-            is_testing = True
+        test_override, is_testing, is_demo = _get_test_settings(user_id)
+        if is_demo:
+            try:
+                contacts = generate_fake_contacts(api_key, search_query, count=search_limit)
+            except Exception:
+                current_app.logger.exception("Demo contact generation failed")
+                contacts = []
+        elif test_override and test_override != "demo":
+            contacts = test_override
         else:
             try:
                 contacts = search_contacts(api_key, search_query, limit=search_limit, user_id=user_id)
-                is_testing = False
             except Exception as e:
                 current_app.logger.exception("Agent search failed")
                 contacts = []
-                is_testing = False
 
         col.update_one(
             {"_id": thread["_id"]},
@@ -368,12 +407,14 @@ def send_message_to_thread(thread_id):
         if contacts:
             reachable = [c for c in contacts if c.get("whatsapp") or c.get("phone")]
             summary = f"Found {len(contacts)} contact{'s' if len(contacts) != 1 else ''}."
-            if is_testing:
+            if is_demo:
+                summary += " (Demo mode — these are AI-generated fake leads)"
+            elif is_testing:
                 summary += " (Testing mode — returning your test contact)"
 
             contacts_msg = {
                 "role": "assistant", "content": summary, "type": "contacts",
-                "metadata": {"contacts": contacts, "testing_mode": is_testing},
+                "metadata": {"contacts": contacts, "testing_mode": is_testing, "demo_mode": is_demo},
                 "created_at": _now(),
             }
             col.update_one({"_id": thread["_id"]}, {"$push": {"messages": contacts_msg}, "$set": {"updated_at": _now()}})
@@ -408,22 +449,51 @@ def send_message_to_thread(thread_id):
         contacts = ctx.get("contacts_found") or []
         reachable = [c for c in contacts if c.get("whatsapp") or c.get("phone")]
 
-        # Generate a draft message template using the first contact as reference
         draft_text = ""
         campaign_context = (thread.get("campaign_context") or "").strip()
+        sender_name, business_name = _get_sender_info(user_id)
+
         if reachable and api_key:
             try:
                 sample = reachable[0]
-                draft_prompt = _build_outreach_message_prompt(objective, sample, campaign_context)
-                draft_prompt += "\n\nIMPORTANT: Use {name} as a placeholder for the recipient's name so the message can be sent to multiple people. Write ONLY the message text."
-                draft_conv = [{"role": "user", "content": f"Write an outreach message template for {objective}."}]
+                draft_prompt = (
+                    "You write short, natural WhatsApp outreach messages.\n"
+                    "Write a TEMPLATE message that will be sent to multiple people.\n\n"
+                    "RULES:\n"
+                    "- Use {name} as the ONLY placeholder — it will be auto-replaced with each recipient's real first name.\n"
+                    "- NEVER use any other placeholders like [Your Name], [Company], {sender}, etc.\n"
+                    "- NEVER include bracketed fill-in-the-blank tokens of any kind.\n"
+                    "- Keep it 2-4 sentences. Sound like a real person texting, not a formal letter.\n"
+                    "- No 'Dear', no 'Best regards', no letter-style formatting.\n"
+                    "- Mention specific details from the campaign context to sound genuine.\n"
+                )
+                if sender_name:
+                    draft_prompt += f"\nSENDER NAME: {sender_name} (use this as the sign-off name if you sign off)\n"
+                if business_name:
+                    draft_prompt += f"SENDER BUSINESS: {business_name}\n"
+                draft_prompt += f"\nCAMPAIGN OBJECTIVE: {objective}\n"
+                if campaign_context:
+                    draft_prompt += f"\nCAMPAIGN CONTEXT:\n{campaign_context}\n"
+                draft_prompt += f"\nSAMPLE RECIPIENT (for reference, but use {{name}} in the message):\n"
+                draft_prompt += f"- Name: {sample.get('name', 'Unknown')}\n"
+                if sample.get("title"):
+                    draft_prompt += f"- Title: {sample['title']}\n"
+                if sample.get("company"):
+                    draft_prompt += f"- Company: {sample['company']}\n"
+                if sample.get("summary"):
+                    draft_prompt += f"- Notes: {sample['summary']}\n"
+                draft_prompt += "\nWrite the message template now. Output ONLY the message text."
+
+                draft_conv = [{"role": "user", "content": f"Write an outreach message template for: {objective}"}]
                 draft_result = query_perplexity_chat(api_key, draft_conv, draft_prompt)
                 draft_text = (draft_result.get("reply", "") if isinstance(draft_result, dict) else str(draft_result)).strip()
+                draft_text = _clean_message(draft_text, sender_name)
             except Exception:
                 current_app.logger.exception("Failed to generate draft message")
 
         if not draft_text:
-            draft_text = f"Hi {{name}},\n\nI wanted to reach out regarding {objective}.\n\nWould love to connect and discuss further. Let me know if you're interested!\n\nBest regards"
+            sign_off = f"\n\n— {sender_name}" if sender_name else ""
+            draft_text = f"Hey {{name}}, I wanted to reach out about {objective}. Would love to connect and chat about this — let me know if you're open to it!{sign_off}"
 
         col.update_one({"_id": thread["_id"]}, {"$set": {"context.draft_message": draft_text, "updated_at": _now()}})
 
@@ -448,14 +518,30 @@ def _strip_msg(msg):
 
 # ── Execute (SSE) ────────────────────────────────────
 
-def _build_outreach_message_prompt(objective, contact, campaign_context=""):
+def _build_outreach_message_prompt(objective, contact, campaign_context="", sender_name="", business_name=""):
     parts = [
-        "You are a professional outreach assistant. Write a single, personalized outreach message.",
-        "Write ONLY the message text that will be sent directly via WhatsApp.",
-        "Keep the message concise, friendly, and professional.",
+        "You are a professional outreach assistant. Write a single, personalized WhatsApp message.",
+        "Write ONLY the final message text — it will be sent DIRECTLY to the recipient with zero edits.",
         "",
-        f"CAMPAIGN OBJECTIVE: {objective}",
+        "CRITICAL RULES:",
+        "- Use the recipient's ACTUAL first name — never write {name}, [Name], or any placeholder.",
+        "- NEVER include sign-off placeholders like [Your Name], [Your Company], {sender}, etc.",
+        "- NEVER include bracketed/braced fill-in-the-blank tokens of any kind.",
+        "- Keep it concise (2-4 sentences), warm, and natural — like a real person texting on WhatsApp.",
+        "- Do NOT write formal letter-style openings or closings (no 'Dear', no 'Best regards').",
+        "- Sound human, not like a template. Vary sentence structure.",
     ]
+    if sender_name or business_name:
+        parts.append("")
+        sender_line = "SENDER: "
+        if sender_name:
+            sender_line += sender_name
+        if business_name:
+            sender_line += f" from {business_name}" if sender_name else business_name
+        parts.append(sender_line)
+        parts.append("Sign off naturally with the sender's real name if appropriate.")
+    parts.append("")
+    parts.append(f"CAMPAIGN OBJECTIVE: {objective}")
     if campaign_context:
         parts.append("")
         parts.append(f"CAMPAIGN CONTEXT (use this information to craft the message):\n{campaign_context}")
@@ -472,8 +558,118 @@ def _build_outreach_message_prompt(objective, contact, campaign_context=""):
     if contact.get("summary"):
         parts.append(f"- Notes: {contact['summary']}")
     parts.append("")
-    parts.append("Write the outreach message now. Output ONLY the message text.")
+    parts.append("Write the outreach message now. Output ONLY the message text, ready to send as-is.")
     return "\n".join(parts)
+
+
+def _run_demo_conversation_loop(app, user_id, jid, contact, objective, campaign_context, max_rounds=4):
+    """Background thread: simulate a multi-turn conversation for demo contacts."""
+    with app.app_context():
+        api_key = config.PERPLEXITY_API_KEY
+        if not api_key:
+            return
+
+        from routes.webhook_routes import (
+            _build_follow_up_prompt, _parse_follow_up_response, _resolve_status,
+        )
+
+        msg_col = get_message_logs_collection()
+        conv_col = get_outbound_conversations_collection()
+        contact_name = contact.get("name", "")
+
+        for round_num in range(max_rounds):
+            time.sleep(3)
+
+            conversation = conv_col.find_one({"user_id": user_id, "jid": jid})
+            if not conversation:
+                break
+
+            recent_msgs = list(
+                msg_col.find({"user_id": user_id, "jid": jid})
+                .sort("wa_message_timestamp", -1)
+                .limit(10)
+            )
+            recent_msgs.reverse()
+            history = [{"fromMe": m.get("from_me", False), "text": m.get("text", "")} for m in recent_msgs]
+
+            last_customer_msg = conversation.get("last_customer_message", "")
+            system_prompt = _build_follow_up_prompt(
+                objective, contact_name, history, business_context=campaign_context
+            )
+            chat_msgs = [{"role": "user", "content": f"Customer replied: {last_customer_msg}"}]
+
+            try:
+                result = query_perplexity_chat(api_key, chat_msgs, system_prompt)
+                raw_reply = result.get("reply", "") if isinstance(result, dict) else str(result)
+                parsed = _parse_follow_up_response(raw_reply)
+            except Exception:
+                app.logger.exception("Demo loop: AI follow-up failed for %s round %d", jid, round_num)
+                break
+
+            ai_reply = (parsed.get("reply") or "").strip()
+            if not ai_reply:
+                break
+
+            ai_ts = time.time()
+            msg_col.insert_one({
+                "user_id": user_id,
+                "channel": "whatsapp",
+                "jid": jid,
+                "message_id": f"demo_{uuid4().hex[:12]}",
+                "from_me": True,
+                "direction": "outbound",
+                "text": ai_reply,
+                "message_type": "text",
+                "wa_message_timestamp": ai_ts,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "is_demo": True,
+            })
+
+            status_after_ai = _resolve_status(parsed, last_customer_msg, conversation)
+            conv_col.update_one(
+                {"user_id": user_id, "jid": jid},
+                {"$set": {"status": status_after_ai, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+
+            time.sleep(3)
+
+            try:
+                fake_reply = generate_fake_reply(api_key, contact, ai_reply, objective)
+            except Exception:
+                app.logger.exception("Demo loop: fake reply generation failed for %s round %d", jid, round_num)
+                break
+
+            reply_ts = time.time()
+            msg_col.insert_one({
+                "user_id": user_id,
+                "channel": "whatsapp",
+                "jid": jid,
+                "message_id": f"demo_{uuid4().hex[:12]}",
+                "from_me": False,
+                "direction": "inbound",
+                "text": fake_reply,
+                "message_type": "text",
+                "push_name": contact_name,
+                "wa_message_timestamp": reply_ts,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "is_demo": True,
+            })
+
+            conversation = conv_col.find_one({"user_id": user_id, "jid": jid}) or conversation
+            new_status = _resolve_status({"customer_interest": "neutral"}, fake_reply, conversation)
+
+            conv_col.update_one(
+                {"user_id": user_id, "jid": jid},
+                {"$set": {
+                    "last_customer_message": fake_reply,
+                    "last_customer_message_at": datetime.now(timezone.utc).isoformat(),
+                    "status": new_status,
+                    "auto_reply_count": round_num + 2,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+
+        app.logger.info("Demo conversation loop finished for %s", jid)
 
 
 @agent_bp.route("/threads/<thread_id>/execute", methods=["POST"])
@@ -514,13 +710,16 @@ def execute_thread(thread_id):
     if message_template:
         col.update_one({"_id": thread["_id"]}, {"$set": {"context.draft_message": message_template}})
 
+    sender_name, business_name = _get_sender_info(user_id)
+
     def _apply_template(tmpl, contact):
-        """Replace {name}, {company}, {title} placeholders in the template."""
+        """Replace {name}, {company}, {title} placeholders and strip leftover bracket tokens."""
         msg = tmpl
-        msg = msg.replace("{name}", contact.get("name") or "there")
+        first_name = (contact.get("name") or "").split()[0] if contact.get("name") else "there"
+        msg = msg.replace("{name}", first_name)
         msg = msg.replace("{company}", contact.get("company") or "your company")
         msg = msg.replace("{title}", contact.get("title") or "")
-        return msg.strip()
+        return _clean_message(msg, sender_name)
 
     def generate():
         total = len(reachable)
@@ -539,10 +738,14 @@ def execute_thread(thread_id):
                 if template:
                     final_message = _apply_template(template, contact)
                 else:
-                    system_prompt = _build_outreach_message_prompt(objective, contact, campaign_context)
+                    system_prompt = _build_outreach_message_prompt(
+                        objective, contact, campaign_context,
+                        sender_name=sender_name, business_name=business_name,
+                    )
                     conversation = [{"role": "user", "content": f"Write an outreach message to {name or phone}."}]
                     llm_result = query_perplexity_chat(api_key, conversation, system_prompt)
                     final_message = llm_result.get("reply", "") if isinstance(llm_result, dict) else str(llm_result)
+                    final_message = _clean_message(final_message, sender_name)
 
                 if not final_message or not final_message.strip():
                     raise ValueError("Empty message")
@@ -555,6 +758,8 @@ def execute_thread(thread_id):
                 if result.get("success"):
                     processed += 1
                     status = "sent"
+                    contact_is_demo = is_demo_jid(jid)
+                    contact_is_test = contact.get("source") == "testing"
 
                     conv_col = get_outbound_conversations_collection()
                     conv_now = _now()
@@ -572,10 +777,71 @@ def execute_thread(thread_id):
                             "initial_message": final_message,
                             "status": "sent",
                             "auto_reply_count": 0,
+                            "is_demo": contact_is_demo,
+                            "is_test": contact_is_demo or contact_is_test,
                             "updated_at": conv_now,
                         }, "$setOnInsert": {"created_at": conv_now}},
                         upsert=True,
                     )
+
+                    if contact_is_demo and api_key:
+                        try:
+                            msg_col = get_message_logs_collection()
+                            outbound_ts = time.time()
+
+                            msg_col.insert_one({
+                                "user_id": user_id,
+                                "channel": "whatsapp",
+                                "jid": jid,
+                                "message_id": f"demo_{uuid4().hex[:12]}",
+                                "from_me": True,
+                                "direction": "outbound",
+                                "text": final_message,
+                                "message_type": "text",
+                                "wa_message_timestamp": outbound_ts,
+                                "timestamp": _now(),
+                                "is_demo": True,
+                            })
+
+                            fake_reply = generate_fake_reply(api_key, contact, final_message, objective)
+                            reply_ts = time.time() + 1
+                            msg_col.insert_one({
+                                "user_id": user_id,
+                                "channel": "whatsapp",
+                                "jid": jid,
+                                "message_id": f"demo_{uuid4().hex[:12]}",
+                                "from_me": False,
+                                "direction": "inbound",
+                                "text": fake_reply,
+                                "message_type": "text",
+                                "push_name": name,
+                                "wa_message_timestamp": reply_ts,
+                                "timestamp": _now(),
+                                "is_demo": True,
+                            })
+                            from routes.webhook_routes import _classify_reply
+                            keyword_intent = _classify_reply(fake_reply)
+                            initial_status = "interested" if keyword_intent == "interested" else "active"
+                            conv_col.update_one(
+                                {"user_id": user_id, "jid": jid},
+                                {"$set": {
+                                    "last_customer_message": fake_reply,
+                                    "last_customer_message_at": _now(),
+                                    "customer_name": name,
+                                    "status": initial_status,
+                                    "auto_reply_count": 1,
+                                    "updated_at": _now(),
+                                }},
+                            )
+
+                            app = current_app._get_current_object()
+                            threading.Thread(
+                                target=_run_demo_conversation_loop,
+                                args=(app, user_id, jid, contact, objective, campaign_context),
+                                daemon=True,
+                            ).start()
+                        except Exception:
+                            current_app.logger.exception("Demo fake reply generation failed for %s", name)
                 else:
                     failed += 1
                     status = "failed"

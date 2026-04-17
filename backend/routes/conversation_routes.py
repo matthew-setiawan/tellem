@@ -66,13 +66,16 @@ def get_conversation(conversation_id):
     result = _serialize(doc)
     result["messages"] = []
     for msg in messages:
-        result["messages"].append({
+        m = {
             "id": str(msg.get("message_id") or msg.get("_id")),
             "text": msg.get("text"),
             "fromMe": msg.get("from_me", False),
             "timestamp": msg.get("wa_message_timestamp", 0),
             "push_name": msg.get("push_name"),
-        })
+        }
+        if msg.get("is_demo"):
+            m["is_demo"] = True
+        result["messages"].append(m)
 
     return jsonify(result)
 
@@ -83,7 +86,7 @@ def update_conversation_status(conversation_id):
     user_id = g.user["user_id"]
     body = request.get_json(silent=True) or {}
     new_status = (body.get("status") or "").strip()
-    valid_statuses = {"sent", "replied", "interested", "follow_up", "not_interested", "closed", "escalated", "active"}
+    valid_statuses = {"sent", "active", "interested", "not_interested", "escalated", "closed"}
 
     if new_status not in valid_statuses:
         return jsonify({"error": f"Invalid status. Must be one of: {', '.join(sorted(valid_statuses))}"}), 400
@@ -102,6 +105,50 @@ def update_conversation_status(conversation_id):
         return jsonify({"error": "Conversation not found"}), 404
 
     return jsonify(_serialize(result))
+
+
+@conversation_bp.route("/<conversation_id>", methods=["DELETE"])
+@require_auth
+def delete_conversation(conversation_id):
+    user_id = g.user["user_id"]
+    col = get_outbound_conversations_collection()
+
+    try:
+        conv = col.find_one({"_id": ObjectId(conversation_id), "user_id": user_id})
+    except Exception:
+        return jsonify({"error": "Invalid conversation ID"}), 400
+
+    if not conv:
+        return jsonify({"error": "Conversation not found"}), 404
+
+    jid = conv.get("jid", "")
+    col.delete_one({"_id": conv["_id"]})
+
+    if jid:
+        logs_col = get_message_logs_collection()
+        logs_col.delete_many({"user_id": user_id, "jid": jid})
+
+    return jsonify({"ok": True})
+
+
+@conversation_bp.route("/closed", methods=["DELETE"])
+@require_auth
+def clear_closed_conversations():
+    user_id = g.user["user_id"]
+    col = get_outbound_conversations_collection()
+    logs_col = get_message_logs_collection()
+
+    closed = list(col.find({"user_id": user_id, "status": "closed"}, {"jid": 1}))
+    if not closed:
+        return jsonify({"ok": True, "deleted": 0})
+
+    jids = [c["jid"] for c in closed if c.get("jid")]
+    col.delete_many({"user_id": user_id, "status": "closed"})
+
+    if jids:
+        logs_col.delete_many({"user_id": user_id, "jid": {"$in": jids}})
+
+    return jsonify({"ok": True, "deleted": len(closed)})
 
 
 @conversation_bp.route("/stats", methods=["GET"])
@@ -135,11 +182,11 @@ You help the user understand and manage their outbound conversations.
 
 CURRENT STATS:
 - Total conversations: {stats.get('total', 0)}
-- Sent (awaiting reply): {stats.get('sent', 0)}
-- Replied: {stats.get('replied', 0)}
+- Needs Attention (escalated): {stats.get('escalated', 0)}
 - Interested: {stats.get('interested', 0)}
-- Follow Up needed: {stats.get('follow_up', 0)}
-- Not Interested: {stats.get('not_interested', 0)}
+- Active (inconclusive): {stats.get('active', 0)}
+- Sent (awaiting reply): {stats.get('sent', 0)}
+- Declined: {stats.get('not_interested', 0)}
 - Closed: {stats.get('closed', 0)}
 
 RECENT CONVERSATIONS:

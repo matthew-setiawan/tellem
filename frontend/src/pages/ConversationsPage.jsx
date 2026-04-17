@@ -2,19 +2,17 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../services/api'
 import {
-  MessageCircle, RefreshCw, Send, Clock,
+  MessageCircle, RefreshCw, Send, Clock, Trash2, CheckCircle,
   ThumbsUp, ThumbsDown, XCircle, Bot, User, Sparkles, ChevronRight, AlertTriangle, ArrowLeft
 } from 'lucide-react'
 
 const STATUS_CONFIG = {
-  sent: { label: 'Sent', color: '#6b7280', bg: '#f3f4f6', icon: Send },
-  active: { label: 'Active', color: '#2563eb', bg: '#eff6ff', icon: MessageCircle },
-  replied: { label: 'Replied', color: '#2563eb', bg: '#eff6ff', icon: MessageCircle },
-  interested: { label: 'Interested', color: '#16a34a', bg: '#f0fdf4', icon: ThumbsUp },
   escalated: { label: 'Needs Attention', color: '#ea580c', bg: '#fff7ed', icon: AlertTriangle },
-  follow_up: { label: 'Follow Up', color: '#ca8a04', bg: '#fefce8', icon: Clock },
-  not_interested: { label: 'Not Interested', color: '#dc2626', bg: '#fef2f2', icon: ThumbsDown },
-  closed: { label: 'Closed', color: '#9ca3af', bg: '#f9fafb', icon: XCircle },
+  interested: { label: 'Interested', color: '#16a34a', bg: '#f0fdf4', icon: ThumbsUp },
+  not_interested: { label: 'Declined', color: '#dc2626', bg: '#fef2f2', icon: ThumbsDown },
+  active: { label: 'Active', color: '#2563eb', bg: '#eff6ff', icon: MessageCircle },
+  sent: { label: 'Sent', color: '#6b7280', bg: '#f3f4f6', icon: Send },
+  closed: { label: 'Closed', color: '#9ca3af', bg: '#f9fafb', icon: CheckCircle },
 }
 
 function StatusBadge({ status }) {
@@ -90,7 +88,7 @@ function ReplyComposer({ convId, token, onReplySent }) {
   )
 }
 
-function MessageThread({ messages }) {
+function MessageThread({ messages, isTest }) {
   if (!messages?.length) return null
   return (
     <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10, padding: '8px 0' }}>
@@ -98,14 +96,24 @@ function MessageThread({ messages }) {
         <div key={i} style={{
           display: 'flex', flexDirection: msg.fromMe ? 'row-reverse' : 'row', gap: 6,
         }}>
-          <div style={{
-            maxWidth: '75%', padding: '8px 12px', borderRadius: 10, fontSize: 12, lineHeight: 1.5,
-            whiteSpace: 'pre-wrap',
-            ...(msg.fromMe
-              ? { background: 'var(--teal)', color: 'white', borderBottomRightRadius: 3 }
-              : { background: 'white', border: '1px solid var(--border)', borderBottomLeftRadius: 3 }),
-          }}>
-            {msg.text}
+          <div style={{ maxWidth: '75%' }}>
+            {(msg.is_demo || isTest) && (
+              <div style={{
+                fontSize: 9, fontWeight: 700, color: '#7c3aed', textTransform: 'uppercase',
+                marginBottom: 2, textAlign: msg.fromMe ? 'right' : 'left', letterSpacing: 0.5,
+              }}>
+                {msg.fromMe ? 'AI (Test)' : 'Simulated Reply'}
+              </div>
+            )}
+            <div style={{
+              padding: '8px 12px', borderRadius: 10, fontSize: 12, lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+              ...(msg.fromMe
+                ? { background: 'var(--teal)', color: 'white', borderBottomRightRadius: 3 }
+                : { background: 'white', border: '1px solid var(--border)', borderBottomLeftRadius: 3 }),
+            }}>
+              {msg.text}
+            </div>
           </div>
         </div>
       ))}
@@ -113,23 +121,33 @@ function MessageThread({ messages }) {
   )
 }
 
-function ConversationThread({ conv, onStatusChange, expanded, onToggle, token, onReload }) {
+function ConversationThread({ conv, onStatusChange, onDelete, expanded, onToggle, token, onReload }) {
   const name = conv.contact_name || conv.customer_name || conv.jid?.split('@')[0] || 'Unknown'
   const hasReply = conv.last_customer_message
-  const statusActions = ['interested', 'follow_up', 'not_interested', 'closed'].filter(s => s !== conv.status)
+  const isClosed = conv.status === 'closed'
+  const statusActions = Object.keys(STATUS_CONFIG).filter(s => s !== conv.status && s !== 'closed')
 
   const [detail, setDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
 
+  const fetchDetail = useCallback(() => {
+    if (!token) return
+    setLoadingDetail(true)
+    api.getConversation(token, conv._id)
+      .then(d => setDetail(d))
+      .catch(() => {})
+      .finally(() => setLoadingDetail(false))
+  }, [token, conv._id])
+
   useEffect(() => {
-    if (expanded && !detail && !loadingDetail && token) {
-      setLoadingDetail(true)
-      api.getConversation(token, conv._id)
-        .then(d => setDetail(d))
-        .catch(() => {})
-        .finally(() => setLoadingDetail(false))
-    }
-  }, [expanded, conv._id, token])
+    if (expanded && !detail) fetchDetail()
+  }, [expanded, detail, fetchDetail])
+
+  useEffect(() => {
+    if (!expanded || !(conv.is_demo || conv.is_test)) return
+    const timer = setInterval(fetchDetail, 6000)
+    return () => clearInterval(timer)
+  }, [expanded, conv.is_demo, conv.is_test, fetchDetail])
 
   return (
     <div className="card" style={{ marginBottom: 8, cursor: 'pointer', padding: 0, overflow: 'hidden' }}
@@ -147,6 +165,15 @@ function ConversationThread({ conv, onStatusChange, expanded, onToggle, token, o
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontWeight: 600, fontSize: 14 }}>{name}</span>
               <StatusBadge status={conv.status} />
+              {(conv.is_demo || conv.is_test) && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  padding: '2px 7px', borderRadius: 100, fontSize: 9, fontWeight: 700,
+                  color: '#7c3aed', background: '#f5f3ff', textTransform: 'uppercase', letterSpacing: 0.5,
+                }}>
+                  Test
+                </span>
+              )}
               {conv.campaign_name && (
                 <span style={{ fontSize: 10, color: 'var(--ink-muted)', background: 'var(--bg)', padding: '1px 6px', borderRadius: 4 }}>
                   {conv.campaign_name}
@@ -191,7 +218,7 @@ function ConversationThread({ conv, onStatusChange, expanded, onToggle, token, o
               <div style={{ fontWeight: 600, color: 'var(--ink-muted)', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
                 Conversation ({detail.messages.length} messages)
               </div>
-              <MessageThread messages={detail.messages} />
+              <MessageThread messages={detail.messages} isTest={conv.is_demo || conv.is_test} />
             </>
           ) : (
             <>
@@ -221,8 +248,8 @@ function ConversationThread({ conv, onStatusChange, expanded, onToggle, token, o
             }} />
           )}
 
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-            {statusActions.map((status) => {
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+            {!isClosed && statusActions.map((status) => {
               const config = STATUS_CONFIG[status]
               if (!config) return null
               const Icon = config.icon
@@ -233,6 +260,18 @@ function ConversationThread({ conv, onStatusChange, expanded, onToggle, token, o
                 </button>
               )
             })}
+            {!isClosed && (
+              <button onClick={() => onStatusChange(conv._id, 'closed')}
+                className="btn-ghost" style={{ padding: '5px 10px', fontSize: 11, gap: 4, color: '#9ca3af', borderColor: '#9ca3af40', marginLeft: 'auto' }}>
+                <XCircle size={12} /> Close
+              </button>
+            )}
+            {isClosed && (
+              <button onClick={() => { if (confirm('Delete this conversation and all its messages?')) onDelete?.(conv._id) }}
+                className="btn-ghost" style={{ padding: '5px 10px', fontSize: 11, gap: 4, color: '#dc2626', borderColor: '#dc262640' }}>
+                <Trash2 size={12} /> Delete
+              </button>
+            )}
           </div>
           {conv.updated_at && (
             <div style={{ fontSize: 10, color: 'var(--ink-muted)', marginTop: 8 }}>
@@ -254,7 +293,7 @@ export default function ConversationsPage() {
   const [expandedId, setExpandedId] = useState(null)
 
   const [chatMessages, setChatMessages] = useState([
-    { role: 'assistant', text: "Hi! I'm your AI management assistant. I can help you manage your outbound conversations. Ask me things like:\n\n• \"Show me who's interested\"\n• \"How many replies did we get?\"\n• \"Mark all replied as follow up\"\n• \"What's the status of our campaigns?\"" },
+    { role: 'assistant', text: "Hi! I'm your AI management assistant. I can help you manage your outbound conversations. Ask me things like:\n\n• \"Show me who's interested\"\n• \"How many replies did we get?\"\n• \"What's the status of our campaigns?\"" },
   ])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
@@ -291,6 +330,23 @@ export default function ConversationsPage() {
     } catch (err) { alert(err.message) }
   }
 
+  async function handleDelete(convId) {
+    try {
+      await api.deleteConversation(token, convId)
+      setConversations((prev) => prev.filter((c) => c._id !== convId))
+      setExpandedId(null)
+      loadData()
+    } catch (err) { alert(err.message) }
+  }
+
+  async function handleClearClosed() {
+    try {
+      const result = await api.clearClosedConversations(token)
+      loadData()
+      return result.deleted || 0
+    } catch (err) { alert(err.message); return 0 }
+  }
+
   async function handleChatSend(e) {
     e.preventDefault()
     const text = chatInput.trim()
@@ -316,31 +372,32 @@ export default function ConversationsPage() {
   const statItems = [
     { key: 'total', label: 'Total', color: 'var(--ink)' },
     { key: 'escalated', label: 'Needs You', color: '#ea580c' },
-    { key: 'active', label: 'Active', color: '#2563eb' },
     { key: 'interested', label: 'Interested', color: '#16a34a' },
+    { key: 'active', label: 'Active', color: '#2563eb' },
     { key: 'sent', label: 'Sent', color: '#6b7280' },
     { key: 'not_interested', label: 'Declined', color: '#dc2626' },
+    { key: 'closed', label: 'Closed', color: '#9ca3af' },
   ]
 
   const [mobileShowAI, setMobileShowAI] = useState(false)
 
   return (
-    <div className="conversations-layout" style={{ display: 'flex', height: 'calc(100vh)' }}>
+    <div className="conversations-layout" style={{ display: 'flex', height: '100%' }}>
       {/* Left: AI Chat */}
-      <div className={`conversations-ai-panel ${!mobileShowAI ? 'mobile-hidden' : ''}`} style={{ width: 420, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
-        <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div className={`conversations-ai-panel ${!mobileShowAI ? 'mobile-hidden' : ''}`} style={{ width: 340, minWidth: 280, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
+        <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <button className="mobile-back-btn icon-btn" onClick={() => setMobileShowAI(false)}>
             <ArrowLeft size={18} />
           </button>
           <div style={{
-            width: 32, height: 32, borderRadius: 8, background: 'var(--teal-soft)', color: 'var(--teal)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 30, height: 30, borderRadius: 8, background: 'var(--teal-soft)', color: 'var(--teal)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
           }}>
-            <Sparkles size={16} />
+            <Sparkles size={15} />
           </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>AI Assistant</div>
-            <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>Manage your outbound conversations</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>AI Assistant</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Manage conversations</div>
           </div>
         </div>
 
@@ -403,25 +460,30 @@ export default function ConversationsPage() {
         <button className="mobile-panel-toggle" onClick={() => setMobileShowAI(true)}>
           <Sparkles size={14} /> Open AI Assistant
         </button>
-        <div style={{ padding: '16px 24px 12px', borderBottom: '1px solid var(--border)', background: 'var(--card)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Conversations</h2>
+        <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid var(--border)', background: 'var(--card)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Conversations</h2>
             <button onClick={loadData} className="icon-btn"><RefreshCw size={16} /></button>
           </div>
 
           {/* Stats row */}
-          <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-            {statItems.map(({ key, label, color }) => (
-              <button key={key} onClick={() => setStatusFilter(key === 'total' ? '' : key)}
-                style={{
-                  flex: 1, padding: '8px 0', textAlign: 'center', borderRadius: 8, border: 'none', cursor: 'pointer',
-                  background: (statusFilter === key || (key === 'total' && !statusFilter)) ? color + '12' : 'var(--bg)',
-                  transition: '0.15s',
-                }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color }}>{stats[key] || 0}</div>
-                <div style={{ fontSize: 10, color: 'var(--ink-muted)', fontWeight: 600 }}>{label}</div>
-              </button>
-            ))}
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${statItems.length}, 1fr)`, gap: 8, marginBottom: 14 }}>
+            {statItems.map(({ key, label, color }) => {
+              const isActive = statusFilter === key || (key === 'total' && !statusFilter)
+              return (
+                <button key={key} onClick={() => setStatusFilter(key === 'total' ? '' : key)}
+                  style={{
+                    padding: '10px 4px', textAlign: 'center', borderRadius: 10,
+                    border: isActive ? `1.5px solid ${color}30` : '1.5px solid transparent',
+                    cursor: 'pointer',
+                    background: isActive ? color + '10' : 'var(--bg)',
+                    transition: '0.15s',
+                  }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color }}>{stats[key] || 0}</div>
+                  <div style={{ fontSize: 10, color: 'var(--ink-muted)', fontWeight: 600, marginTop: 2 }}>{label}</div>
+                </button>
+              )
+            })}
           </div>
 
           {/* Filter tabs */}
@@ -440,7 +502,7 @@ export default function ConversationsPage() {
           </div>
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
           {loading ? (
             <div className="empty-state"><div className="spinner" /><p>Loading conversations...</p></div>
           ) : conversations.length === 0 ? (
@@ -450,17 +512,36 @@ export default function ConversationsPage() {
               <p>Execute a campaign from the Outbound page to start tracking conversations here.</p>
             </div>
           ) : (
-            conversations.map((conv) => (
-              <ConversationThread
-                key={conv._id}
-                conv={conv}
-                onStatusChange={handleStatusChange}
-                expanded={expandedId === conv._id}
-                onToggle={() => setExpandedId(expandedId === conv._id ? null : conv._id)}
-                token={token}
-                onReload={loadData}
-              />
-            ))
+            <>
+              {statusFilter === 'closed' && conversations.length > 0 && (
+                <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Delete all ${conversations.length} closed conversation(s) and their messages? This cannot be undone.`))
+                        handleClearClosed()
+                    }}
+                    className="btn-ghost"
+                    style={{
+                      padding: '6px 14px', fontSize: 12, gap: 6,
+                      color: '#dc2626', borderColor: '#dc262640', fontWeight: 600,
+                    }}>
+                    <Trash2 size={14} /> Clear All Closed
+                  </button>
+                </div>
+              )}
+              {conversations.map((conv) => (
+                <ConversationThread
+                  key={conv._id}
+                  conv={conv}
+                  onStatusChange={handleStatusChange}
+                  onDelete={handleDelete}
+                  expanded={expandedId === conv._id}
+                  onToggle={() => setExpandedId(expandedId === conv._id ? null : conv._id)}
+                  token={token}
+                  onReload={loadData}
+                />
+              ))}
+            </>
           )}
         </div>
       </div>

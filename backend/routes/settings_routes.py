@@ -19,9 +19,11 @@ def _get_settings(user_id):
         return {
             "user_id": user_id,
             "testing_mode": False,
+            "demo_leads": False,
             "test_contact": {"name": "", "email": "", "whatsapp": ""},
         }
     doc.pop("_id", None)
+    doc.setdefault("demo_leads", False)
     return doc
 
 
@@ -42,6 +44,9 @@ def update_settings():
 
     if "testing_mode" in body:
         updates["testing_mode"] = bool(body["testing_mode"])
+
+    if "demo_leads" in body:
+        updates["demo_leads"] = bool(body["demo_leads"])
 
     if "test_contact" in body:
         tc = body["test_contact"] or {}

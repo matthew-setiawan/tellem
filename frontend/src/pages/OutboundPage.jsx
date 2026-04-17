@@ -341,9 +341,9 @@ function MessageBubble({ msg, onExecute, executing, onPickOption, isSending, onS
 
   if (msg.type === 'contacts' && msg.metadata?.contacts?.length > 0) {
     return (
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4, overflow: 'hidden' }}>
         <div style={avatarStyle('assistant')}><Bot size={13} /></div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
           <div style={bubbleStyle(false)}>
             {msg.content}
             {msg.metadata.testing_mode && (
@@ -352,7 +352,7 @@ function MessageBubble({ msg, onExecute, executing, onPickOption, isSending, onS
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8, marginTop: 8 }}>
+          <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8, marginTop: 8, WebkitOverflowScrolling: 'touch' }}>
             {msg.metadata.contacts.map((c, i) => <ContactCard key={i} contact={c} />)}
           </div>
         </div>
@@ -609,7 +609,7 @@ export default function OutboundPage() {
   }
 
   return (
-    <div className="outbound-layout" style={{ display: 'flex', height: '100vh' }}>
+    <div className="outbound-layout" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* ── Left sidebar: Threads ── */}
       <div className={`outbound-sidebar ${mobileShowChat ? 'mobile-hidden' : ''}`} style={{
         width: 280, borderRight: '1px solid var(--border)', background: 'var(--card)',
@@ -676,7 +676,7 @@ export default function OutboundPage() {
       </div>
 
       {/* ── Main chat area ── */}
-      <div className={`outbound-main ${!mobileShowChat ? 'mobile-hidden' : ''}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <div className={`outbound-main ${!mobileShowChat ? 'mobile-hidden' : ''}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)', overflow: 'hidden', minWidth: 0 }}>
         {!activeThreadId ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
             <div style={{

@@ -16,6 +16,7 @@ export default function SettingsPage() {
   const socketRef = useRef(null)
 
   const [testingMode, setTestingMode] = useState(false)
+  const [demoLeads, setDemoLeads] = useState(false)
   const [testName, setTestName] = useState('')
   const [testEmail, setTestEmail] = useState('')
   const [testWhatsapp, setTestWhatsapp] = useState('')
@@ -27,6 +28,7 @@ export default function SettingsPage() {
     api.getSettings(token)
       .then((data) => {
         setTestingMode(!!data.testing_mode)
+        setDemoLeads(!!data.demo_leads)
         const tc = data.test_contact || {}
         setTestName(tc.name || '')
         setTestEmail(tc.email || '')
@@ -41,6 +43,7 @@ export default function SettingsPage() {
     setSaving(true)
     const payload = {
       testing_mode: 'testing_mode' in overrides ? overrides.testing_mode : testingMode,
+      demo_leads: 'demo_leads' in overrides ? overrides.demo_leads : demoLeads,
       test_contact: {
         name: 'name' in overrides ? overrides.name : testName,
         email: 'email' in overrides ? overrides.email : testEmail,
@@ -131,39 +134,85 @@ export default function SettingsPage() {
 
           {testingMode && (
             <div style={{ marginTop: 20 }}>
-              <div style={{
-                padding: 10, background: '#fefce8', borderRadius: 8, border: '1px solid #fef08a',
-                fontSize: 12, color: '#92400e', marginBottom: 16, lineHeight: 1.5,
-              }}>
-                Every outreach search will return this contact. Test the full flow without messaging real people.
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Test method</div>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                <button
+                  onClick={() => { setDemoLeads(true); save({ demo_leads: true }) }}
+                  style={{
+                    flex: 1, padding: 16, borderRadius: 12, cursor: 'pointer', textAlign: 'left',
+                    border: demoLeads ? '2px solid var(--teal)' : '1.5px solid var(--border)',
+                    background: demoLeads ? 'var(--teal-soft)' : 'var(--card)',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, color: demoLeads ? 'var(--teal)' : 'var(--ink)' }}>
+                    Fake Leads (Demo)
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
+                    AI generates fake contacts who "reply" with simulated responses. No real messages sent at all.
+                  </div>
+                </button>
+                <button
+                  onClick={() => { setDemoLeads(false); save({ demo_leads: false }) }}
+                  style={{
+                    flex: 1, padding: 16, borderRadius: 12, cursor: 'pointer', textAlign: 'left',
+                    border: !demoLeads ? '2px solid var(--teal)' : '1.5px solid var(--border)',
+                    background: !demoLeads ? 'var(--teal-soft)' : 'var(--card)',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, color: !demoLeads ? 'var(--teal)' : 'var(--ink)' }}>
+                    Real Number
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
+                    All searches return your test number. Real WhatsApp messages are sent to that number.
+                  </div>
+                </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Name</label>
-                  <input type="text" className="form-input" placeholder="Test contact name"
-                    value={testName}
-                    onChange={(e) => setTestName(e.target.value)}
-                    onBlur={() => save()}
-                  />
+              {demoLeads ? (
+                <div style={{
+                  padding: 12, background: '#f0fdf4', borderRadius: 8, border: '1px solid #bbf7d0',
+                  fontSize: 12, color: '#15803d', lineHeight: 1.5,
+                }}>
+                  Demo mode active. Searches will return AI-generated fake contacts. Messages are simulated — fake leads will "reply" with AI-generated responses. No real messages are sent.
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Email</label>
-                  <input type="email" className="form-input" placeholder="test@example.com"
-                    value={testEmail}
-                    onChange={(e) => setTestEmail(e.target.value)}
-                    onBlur={() => save()}
-                  />
-                </div>
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>WhatsApp Number *</label>
-                <input type="text" className="form-input" placeholder="+1234567890 — this number receives all test messages"
-                  value={testWhatsapp}
-                  onChange={(e) => setTestWhatsapp(e.target.value)}
-                  onBlur={() => save()}
-                />
-              </div>
+              ) : (
+                <>
+                  <div style={{
+                    padding: 10, background: '#fefce8', borderRadius: 8, border: '1px solid #fef08a',
+                    fontSize: 12, color: '#92400e', marginBottom: 16, lineHeight: 1.5,
+                  }}>
+                    Every outreach search will return this contact. Real messages are sent via WhatsApp to this number.
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Name</label>
+                      <input type="text" className="form-input" placeholder="Test contact name"
+                        value={testName}
+                        onChange={(e) => setTestName(e.target.value)}
+                        onBlur={() => save()}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Email</label>
+                      <input type="email" className="form-input" placeholder="test@example.com"
+                        value={testEmail}
+                        onChange={(e) => setTestEmail(e.target.value)}
+                        onBlur={() => save()}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>WhatsApp Number *</label>
+                    <input type="text" className="form-input" placeholder="+1234567890 — this number receives all test messages"
+                      value={testWhatsapp}
+                      onChange={(e) => setTestWhatsapp(e.target.value)}
+                      onBlur={() => save()}
+                    />
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

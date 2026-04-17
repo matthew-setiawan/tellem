@@ -1,6 +1,13 @@
 """
 Webhook endpoint — receives inbound messages from the WhatsApp service.
 Outbound-only logic: only auto-reply when a customer responds to our initial outbound message.
+
+Status hierarchy (mutually exclusive, auto-sorted by priority):
+  1. escalated  — AI can't answer a customer concern → needs human attention
+  2. interested — customer showed ANY positive signal (sticky, never downgrades to active)
+  3. not_interested — customer explicitly declined
+  4. active     — customer replied but intent is inconclusive
+  5. sent       — no customer response yet
 """
 
 import json
@@ -22,9 +29,26 @@ webhook_bp = Blueprint("webhook", __name__)
 def _classify_reply(customer_text):
     """Quick keyword-based classification of customer intent."""
     text = customer_text.lower().strip()
-    negative = ["not interested", "no thanks", "no thank you", "stop", "unsubscribe", "don't contact", "remove me"]
-    positive = ["interested", "tell me more", "sounds good", "yes", "sure", "let's", "let's talk",
-                 "book a call", "schedule", "demo", "sign me up", "i'm in", "count me in"]
+    negative = [
+        "not interested", "no thanks", "no thank you", "stop", "unsubscribe",
+        "don't contact", "remove me", "please don't", "leave me alone",
+        "not for me", "pass on this", "no need",
+    ]
+    positive = [
+        "interested", "tell me more", "sounds good", "sounds great", "sounds interesting",
+        "yes", "yeah", "yep", "yup", "sure", "absolutely", "definitely", "of course",
+        "let's", "let's talk", "let's chat", "let's connect", "let's do it",
+        "book a call", "schedule", "set up a call", "set up a meeting",
+        "demo", "sign me up", "i'm in", "count me in",
+        "when can we", "when are you", "what time", "what's your availability",
+        "available", "free to chat", "free to talk",
+        "love to", "would love", "i'd like", "i'd love",
+        "send me", "share more", "more info", "more details", "more about",
+        "how much", "what's the price", "pricing", "how does it work",
+        "that's great", "that's awesome", "that's cool", "amazing",
+        "can you tell me", "can we", "could we",
+        "open to", "down for", "keen",
+    ]
 
     for phrase in negative:
         if phrase in text:
@@ -32,7 +56,32 @@ def _classify_reply(customer_text):
     for phrase in positive:
         if phrase in text:
             return "interested"
-    return "replied"
+    return "neutral"
+
+
+def _resolve_status(parsed, customer_text, conversation):
+    """Determine the single correct status using priority hierarchy.
+
+    Priority: escalated > interested > not_interested > active > sent.
+    "interested" is sticky — once a conversation reaches interested it never
+    auto-downgrades to active.
+    """
+    current_status = conversation.get("status", "sent")
+
+    llm_interest = parsed.get("customer_interest", "").lower().strip()
+    keyword_intent = _classify_reply(customer_text)
+
+    is_positive = llm_interest == "interested" or keyword_intent == "interested"
+    is_negative = llm_interest == "not_interested" or keyword_intent == "not_interested"
+    was_interested = current_status == "interested"
+
+    if is_negative and not was_interested:
+        return "not_interested"
+
+    if is_positive or was_interested:
+        return "interested"
+
+    return "active"
 
 
 def _build_follow_up_prompt(objective, contact_name, conversation_history,
@@ -46,8 +95,21 @@ def _build_follow_up_prompt(objective, contact_name, conversation_history,
         '{',
         '  "action": "reply | escalate",',
         '  "reply": "<your message to the customer>",',
+        '  "customer_interest": "interested | not_interested | neutral",',
         '  "escalation_reason": "<ONLY when you need specific info from your manager>"',
         '}',
+        "",
+        "═══ CUSTOMER INTEREST CLASSIFICATION ═══",
+        "",
+        "Based on the FULL conversation (not just the latest message), classify the customer:",
+        '  "interested" — customer is engaging positively: asking questions, suggesting times,',
+        "    saying yes/sure/sounds good, wanting to learn more, open to a call/meeting,",
+        "    sharing availability, asking about pricing/details, or generally warm and receptive.",
+        '  "not_interested" — customer explicitly declines, says stop, not interested, etc.',
+        '  "neutral" — unclear intent, very early in conversation, or just acknowledging.',
+        "",
+        "IMPORTANT: Lean toward \"interested\" if there are ANY positive signals in the",
+        "conversation. A customer who is asking questions or hasn't said no is likely interested.",
         "",
         "═══ CONVERSATION RULES ═══",
         "",
@@ -120,20 +182,14 @@ def handle_inbound_message():
 
     is_lid = jid.endswith("@lid")
 
-    # Normalize JID — strip +, spaces, dashes from the phone portion
     digits = "".join(ch for ch in jid.split("@")[0] if ch.isdigit())
     normalized_jid = f"{digits}@s.whatsapp.net" if not is_lid else jid
 
     conv_col = get_outbound_conversations_collection()
 
     if is_lid:
-        # @lid JID that the WhatsApp service couldn't resolve.
-        # Try to find the conversation by checking recent outbound conversations
-        # for this user where the contact may have replied.
         current_app.logger.info(f"Received unresolved @lid JID: {jid}, attempting fallback lookup")
 
-        # Strategy: look up all active outbound conversations for this user
-        # and find one whose contact name matches the push_name
         conversation = None
         if push_name:
             conversation = conv_col.find_one({
@@ -160,7 +216,6 @@ def handle_inbound_message():
             "$or": [{"jid": jid}, {"jid": normalized_jid}],
         })
 
-        # If found with a mismatched JID, fix it for future lookups
         if conversation and conversation.get("jid") != normalized_jid:
             conv_col.update_one({"_id": conversation["_id"]}, {"$set": {"jid": normalized_jid}})
             conversation["jid"] = normalized_jid
@@ -174,7 +229,8 @@ def handle_inbound_message():
         return jsonify({"ok": True, "action": "ignored", "reason": f"conversation {conversation['status']}"})
 
     now = datetime.now(timezone.utc).isoformat()
-    intent = _classify_reply(text)
+    keyword_intent = _classify_reply(text)
+    current_status = conversation.get("status", "sent")
 
     update_fields = {
         "updated_at": now,
@@ -184,37 +240,41 @@ def handle_inbound_message():
     if push_name:
         update_fields["customer_name"] = push_name
 
-    if intent == "not_interested":
+    if keyword_intent == "not_interested" and current_status != "interested":
         update_fields["status"] = "not_interested"
-    elif intent == "interested":
+    elif keyword_intent == "interested" or current_status == "interested":
         update_fields["status"] = "interested"
-    elif conversation.get("status") == "sent":
-        update_fields["status"] = "replied"
+    elif current_status == "sent":
+        update_fields["status"] = "active"
+    else:
+        update_fields["status"] = "active"
 
     reply_count = conversation.get("auto_reply_count", 0)
     update_fields["auto_reply_count"] = reply_count + 1
 
     conv_col.update_one({"_id": conversation["_id"]}, {"$set": update_fields})
 
-    # Skip auto-reply if conversation is paused by user (waiting for user instruction)
-    if conversation.get("status") == "escalated" and not conversation.get("user_instruction"):
+    is_test_conversation = conversation.get("is_demo") or conversation.get("is_test")
+
+    if conversation.get("status") == "escalated" and not conversation.get("user_instruction") and not is_test_conversation:
         current_app.logger.info(f"Conversation {jid} is escalated and waiting for user input, not auto-replying")
         return jsonify({"ok": True, "action": "waiting_for_user", "status": "escalated"})
 
     from config import PERPLEXITY_API_KEY
     if not PERPLEXITY_API_KEY:
         current_app.logger.warning("No Perplexity API key, skipping auto-reply")
-        return jsonify({"ok": True, "action": "status_updated", "status": update_fields.get("status", intent)})
+        return jsonify({"ok": True, "action": "status_updated", "status": update_fields.get("status")})
 
-    if intent == "not_interested":
+    if keyword_intent == "not_interested" and current_status != "interested":
         _send_polite_close(user_id, jid, conversation, text)
-        conv_col.update_one({"_id": conversation["_id"]}, {"$set": {"status": "closed"}})
-        return jsonify({"ok": True, "action": "polite_close_sent", "status": "closed"})
+        conv_col.update_one({"_id": conversation["_id"]}, {"$set": {"status": "not_interested"}})
+        return jsonify({"ok": True, "action": "polite_close_sent", "status": "not_interested"})
 
-    if reply_count >= 20:
+    reply_limit = 50 if is_test_conversation else 20
+    if reply_count >= reply_limit:
         current_app.logger.info(f"Auto-reply limit reached for {jid}")
         conv_col.update_one({"_id": conversation["_id"]}, {"$set": {"status": "escalated",
-                            "escalation_reason": "Auto-reply limit reached (20 messages)"}})
+                            "escalation_reason": f"Auto-reply limit reached ({reply_limit} messages)"}})
         return jsonify({"ok": True, "action": "escalated", "status": "escalated",
                         "reason": "Auto-reply limit reached"})
 
@@ -270,6 +330,7 @@ def _handle_follow_up(user_id, jid, conversation, customer_text, push_name):
 
     objective = conversation.get("objective", "")
     contact_name = push_name or conversation.get("contact_name") or conversation.get("customer_name") or ""
+    is_test_conversation = conversation.get("is_demo") or conversation.get("is_test")
 
     logs_col = get_message_logs_collection()
     jid_digits = "".join(ch for ch in jid.split("@")[0] if ch.isdigit())
@@ -303,10 +364,15 @@ def _handle_follow_up(user_id, jid, conversation, customer_text, push_name):
 
     reply_text = (parsed.get("reply") or "").strip()
 
+    new_status = _resolve_status(parsed, customer_text, conversation)
+
+    if is_test_conversation and action == "escalate":
+        current_app.logger.info(f"Suppressing escalation for test conversation {jid}, forcing reply")
+        action = "reply"
+
     if action == "escalate":
         reason = parsed.get("escalation_reason", "Needs human attention")
 
-        # Send the holding message to the customer (e.g., "Let me check on that!")
         if reply_text:
             send_message(user_id, "whatsapp", jid, reply_text)
 
@@ -324,7 +390,6 @@ def _handle_follow_up(user_id, jid, conversation, customer_text, push_name):
 
     send_message(user_id, "whatsapp", jid, reply_text)
 
-    new_status = "interested" if _classify_reply(customer_text) == "interested" else "active"
     conv_col.update_one({"_id": conversation["_id"]}, {"$set": {
         "status": new_status,
         "updated_at": now,

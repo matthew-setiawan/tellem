@@ -167,6 +167,18 @@ export const api = {
   getConversationStats: (token) =>
     request('/conversations/stats', { headers: authHeaders(token) }),
 
+  deleteConversation: (token, id) =>
+    request(`/conversations/${id}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    }),
+
+  clearClosedConversations: (token) =>
+    request('/conversations/closed', {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    }),
+
   sendConversationReply: (token, id, instruction) =>
     request(`/conversations/${id}/reply`, {
       method: 'POST',

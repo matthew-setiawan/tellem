@@ -1,11 +1,13 @@
 """
 Messaging helpers: send messages via the WhatsApp service.
+Demo JIDs (@demo.tellem) are handled locally without hitting WhatsApp.
 """
 
 import requests
 from flask import current_app
 
 import config
+from modules.demo import is_demo_jid
 
 
 def resolve_existing_jid(user_id, channel, phone):
@@ -23,7 +25,10 @@ def resolve_existing_jid(user_id, channel, phone):
 
 
 def send_message(user_id, channel, jid, text):
-    """Send a text message via the WhatsApp service."""
+    """Send a text message via the WhatsApp service (or silently succeed for demo JIDs)."""
+    if is_demo_jid(jid):
+        return {"success": True, "demo": True}
+
     base = current_app.config.get("WA_SERVICE_URL", config.WA_SERVICE_URL)
     payload = {
         "userId": user_id,
