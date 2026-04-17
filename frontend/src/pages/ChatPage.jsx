@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../services/api'
-import { MessageCircle, Send, RefreshCw } from 'lucide-react'
+import { MessageCircle, Send, RefreshCw, ArrowLeft } from 'lucide-react'
 
 export default function ChatPage() {
   const { token } = useAuth()
@@ -52,10 +52,17 @@ export default function ChatPage() {
     finally { setSending(false) }
   }
 
+  const [mobileShowChat, setMobileShowChat] = useState(false)
+
+  function handleSelectChat(chat) {
+    setSelectedChat(chat)
+    setMobileShowChat(true)
+  }
+
   return (
     <div className="chat-layout">
       {/* Chat list */}
-      <div className="chat-sidebar">
+      <div className={`chat-sidebar ${mobileShowChat ? 'mobile-hidden' : ''}`}>
         <div className="chat-sidebar-header">
           <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Chats</h3>
           <button onClick={loadChats} className="icon-btn"><RefreshCw size={16} /></button>
@@ -70,7 +77,7 @@ export default function ChatPage() {
             const name = chat.displayName || chat.name || chat.jid?.split('@')[0] || 'Unknown'
             const isActive = selectedChat?.jid === chat.jid || selectedChat?.id === chat.id
             return (
-              <div key={chat.jid || chat.id} className={`chat-item ${isActive ? 'active' : ''}`} onClick={() => setSelectedChat(chat)}>
+              <div key={chat.jid || chat.id} className={`chat-item ${isActive ? 'active' : ''}`} onClick={() => handleSelectChat(chat)}>
                 <div className="chat-item-avatar">{name[0]?.toUpperCase()}</div>
                 <div className="chat-item-info">
                   <span className="chat-item-name">{name}</span>
@@ -83,7 +90,7 @@ export default function ChatPage() {
       </div>
 
       {/* Chat window */}
-      <div className="chat-window">
+      <div className={`chat-window ${!mobileShowChat ? 'mobile-hidden' : ''}`}>
         {!selectedChat ? (
           <div className="chat-empty">
             <MessageCircle size={48} style={{ color: 'var(--ink-muted)', marginBottom: 16 }} />
@@ -93,6 +100,9 @@ export default function ChatPage() {
         ) : (
           <>
             <div className="chat-window-header">
+              <button className="mobile-back-btn icon-btn" onClick={() => setMobileShowChat(false)}>
+                <ArrowLeft size={18} />
+              </button>
               <div className="chat-window-avatar">
                 {(selectedChat.displayName || selectedChat.name || 'U')[0]?.toUpperCase()}
               </div>

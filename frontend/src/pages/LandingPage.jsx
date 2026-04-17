@@ -1,9 +1,10 @@
 import { Link } from 'react-router-dom'
 import {
   ArrowRight, Check, MessageCircle, Zap, Users,
-  Play, Send, Briefcase, User2, Handshake, Lightbulb, Star
+  Play, Send, Briefcase, User2, Handshake, Lightbulb, Star,
+  Search, Target, Bot, Trophy
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ChatInterfaceMockup from '../components/ChatInterfaceMockup'
 
 const useCases = [
@@ -51,8 +52,20 @@ const testimonials = [
   { quote: 'Finding a cofounder felt impossible. Posted on Tellem, and within 2 weeks had 10 qualified matches.', name: 'Priya Singh', role: 'Founder', company: 'PropTech Startup' },
 ]
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= breakpoint)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= breakpoint)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [breakpoint])
+  return isMobile
+}
+
 export default function LandingPage() {
   const [activeUseCase, setActiveUseCase] = useState('consulting')
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const isMobile = useIsMobile()
   const current = useCases.find((u) => u.id === activeUseCase)
 
   return (
@@ -66,13 +79,19 @@ export default function LandingPage() {
             </div>
             <span className="serif" style={{ fontSize: 20, letterSpacing: '-0.02em' }}>Tellem</span>
           </div>
-          <div style={{ display: 'flex', gap: 32 }}>
-            {[['How it works', '#how'], ['Use cases', '#cases'], ['Features', '#features']].map(([l, h]) => (
-              <a key={l} href={h} style={{ fontSize: 14, color: 'var(--ink-soft)', textDecoration: 'none', fontWeight: 500 }}>{l}</a>
-            ))}
-          </div>
+          {!isMobile && (
+            <div style={{ display: 'flex', gap: 32 }}>
+              {[['How it works', '#how'], ['Use cases', '#cases'], ['Features', '#features'], ['Pricing', '/pricing']].map(([l, h]) => (
+                h.startsWith('/') ? (
+                  <Link key={l} to={h} style={{ fontSize: 14, color: 'var(--ink-soft)', textDecoration: 'none', fontWeight: 500 }}>{l}</Link>
+                ) : (
+                  <a key={l} href={h} style={{ fontSize: 14, color: 'var(--ink-soft)', textDecoration: 'none', fontWeight: 500 }}>{l}</a>
+                )
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
-            <Link to="/login" className="btn-ghost" style={{ padding: '9px 18px', fontSize: 13 }}>Sign in</Link>
+            {!isMobile && <Link to="/login" className="btn-ghost" style={{ padding: '9px 18px', fontSize: 13 }}>Sign in</Link>}
             <Link to="/register" className="btn-primary" style={{ padding: '9px 18px', fontSize: 13 }}>
               Get started <ArrowRight style={{ width: 13, height: 13 }} />
             </Link>
@@ -104,7 +123,7 @@ export default function LandingPage() {
               <Play style={{ width: 14, height: 14 }} /> Watch demo
             </button>
           </div>
-          <div className="anim-fade-up delay-4" style={{ display: 'flex', gap: 40, justifyContent: 'center', flexWrap: 'wrap', paddingTop: 32, borderTop: '1px solid var(--border)' }}>
+          <div className="anim-fade-up delay-4" style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: isMobile ? 20 : 40, paddingTop: 32, borderTop: '1px solid var(--border)' }}>
             {[{ n: 'AI Search', l: 'Find anyone' }, { n: 'WhatsApp', l: 'Direct outreach' }, { n: '24/7', l: 'Always on' }, { n: 'Per #', l: 'Target anyone' }].map((s) => (
               <div key={s.n} style={{ textAlign: 'center' }}>
                 <div className="serif" style={{ fontSize: 28, letterSpacing: '-0.02em' }}>{s.n}</div>
@@ -122,16 +141,16 @@ export default function LandingPage() {
             <div className="section-label" style={{ marginBottom: 14 }}>The Process</div>
             <h2 className="serif" style={{ fontSize: 'clamp(36px, 5vw, 52px)', fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1.1 }}>4 steps to qualified meetings</h2>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: isMobile ? 12 : 20 }}>
             {[
-              { n: '1', icon: '🔍', title: 'Search or add numbers', desc: 'AI search or manually add phone numbers.' },
-              { n: '2', icon: '🎯', title: 'Set your objective', desc: 'Tell Tellem what you want to achieve.' },
-              { n: '3', icon: '💬', title: 'AI sends messages', desc: 'Personalized WhatsApp outreach at scale.' },
-              { n: '4', icon: '🤝', title: 'You close the deal', desc: 'Only talk to engaged, interested people.' },
+              { n: '1', icon: <Search className="w-5 h-5" />, title: 'Search or add numbers', desc: 'AI search or manually add phone numbers.' },
+              { n: '2', icon: <Target className="w-5 h-5" />, title: 'Set your objective', desc: 'Tell Tellem what you want to achieve.' },
+              { n: '3', icon: <Bot className="w-5 h-5" />, title: 'AI sends messages', desc: 'Personalized WhatsApp outreach at scale.' },
+              { n: '4', icon: <Trophy className="w-5 h-5" />, title: 'You close the deal', desc: 'Only talk to engaged, interested people.' },
             ].map((step) => (
               <div key={step.n} className="card flow-step" style={{ padding: 32, textAlign: 'center' }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--teal)', letterSpacing: '0.1em', marginBottom: 16 }}>STEP {step.n}</div>
-                <div style={{ fontSize: 40, marginBottom: 16 }}>{step.icon}</div>
+                <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--teal-soft)', color: 'var(--teal)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>{step.icon}</div>
                 <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>{step.title}</h3>
                 <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.75 }}>{step.desc}</p>
               </div>
@@ -147,7 +166,7 @@ export default function LandingPage() {
             <div className="section-label" style={{ marginBottom: 14 }}>Use Cases</div>
             <h2 className="serif" style={{ fontSize: 'clamp(36px, 5vw, 52px)', fontWeight: 600, letterSpacing: '-0.03em' }}>Works for any outbound need</h2>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 60 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 12, marginBottom: isMobile ? 30 : 60 }}>
             {useCases.map((uc) => (
               <button key={uc.id} onClick={() => setActiveUseCase(uc.id)} style={{
                 padding: 20, borderRadius: 16,
@@ -161,13 +180,13 @@ export default function LandingPage() {
             ))}
           </div>
           {current && (
-            <div className="anim-fade-in card" style={{ padding: 60, background: current.bg }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 60, alignItems: 'center' }}>
+            <div className="anim-fade-in card" style={{ padding: isMobile ? 24 : 60, background: current.bg }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 24 : 60, alignItems: 'center' }}>
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: current.color, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 16 }}>Use case</div>
                   <h3 className="serif" style={{ fontSize: 44, fontWeight: 600, letterSpacing: '-0.03em', marginBottom: 20, lineHeight: 1.15 }}>{current.headline}</h3>
                   <p style={{ fontSize: 15, color: 'var(--ink-soft)', lineHeight: 1.8, marginBottom: 32 }}>{current.benefit}</p>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: current.color }}>📊 {current.metric}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: current.color }}>{current.metric}</div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   {current.flow.map((step, i) => (
@@ -206,7 +225,7 @@ export default function LandingPage() {
             <div className="section-label" style={{ marginBottom: 14 }}>Features</div>
             <h2 className="serif" style={{ fontSize: 'clamp(36px, 5vw, 52px)', fontWeight: 600, letterSpacing: '-0.03em' }}>Built for outbound</h2>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: isMobile ? 12 : 20 }}>
             {features.map((f) => (
               <div key={f.title} className="card" style={{ padding: 40 }}>
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--teal-soft)', color: 'var(--teal)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>{f.icon}</div>
@@ -225,7 +244,7 @@ export default function LandingPage() {
             <div className="section-label" style={{ marginBottom: 14 }}>Testimonials</div>
             <h2 className="serif" style={{ fontSize: 'clamp(36px, 5vw, 52px)', fontWeight: 600, letterSpacing: '-0.03em' }}>Users love Tellem</h2>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: isMobile ? 12 : 20 }}>
             {testimonials.map((t) => (
               <div key={t.name} className="card" style={{ padding: 40 }}>
                 <div style={{ display: 'flex', gap: 2, marginBottom: 20 }}>

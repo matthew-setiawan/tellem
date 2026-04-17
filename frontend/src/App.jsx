@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import LandingPage from './pages/LandingPage'
+import PricingPage from './pages/PricingPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import AppShell from './components/AppShell'
@@ -20,6 +21,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={isAuthenticated ? <Navigate to="/outbound" /> : <LandingPage />} />
+      <Route path="/pricing" element={<PricingPage />} />
       <Route path="/login" element={isAuthenticated ? <Navigate to="/outbound" /> : <LoginPage />} />
       <Route path="/register" element={isAuthenticated ? <Navigate to="/outbound" /> : <RegisterPage />} />
       <Route

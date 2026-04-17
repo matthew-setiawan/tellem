@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext'
 import { api } from '../services/api'
 import {
   MessageCircle, RefreshCw, Send, Clock,
-  ThumbsUp, ThumbsDown, XCircle, Bot, User, Sparkles, ChevronRight, AlertTriangle
+  ThumbsUp, ThumbsDown, XCircle, Bot, User, Sparkles, ChevronRight, AlertTriangle, ArrowLeft
 } from 'lucide-react'
 
 const STATUS_CONFIG = {
@@ -322,11 +322,16 @@ export default function ConversationsPage() {
     { key: 'not_interested', label: 'Declined', color: '#dc2626' },
   ]
 
+  const [mobileShowAI, setMobileShowAI] = useState(false)
+
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh)' }}>
+    <div className="conversations-layout" style={{ display: 'flex', height: 'calc(100vh)' }}>
       {/* Left: AI Chat */}
-      <div style={{ width: 420, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
+      <div className={`conversations-ai-panel ${!mobileShowAI ? 'mobile-hidden' : ''}`} style={{ width: 420, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
         <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button className="mobile-back-btn icon-btn" onClick={() => setMobileShowAI(false)}>
+            <ArrowLeft size={18} />
+          </button>
           <div style={{
             width: 32, height: 32, borderRadius: 8, background: 'var(--teal-soft)', color: 'var(--teal)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -394,7 +399,10 @@ export default function ConversationsPage() {
       </div>
 
       {/* Right: Conversation feed */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <div className={`conversations-feed ${mobileShowAI ? 'mobile-hidden' : ''}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+        <button className="mobile-panel-toggle" onClick={() => setMobileShowAI(true)}>
+          <Sparkles size={14} /> Open AI Assistant
+        </button>
         <div style={{ padding: '16px 24px 12px', borderBottom: '1px solid var(--border)', background: 'var(--card)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Conversations</h2>

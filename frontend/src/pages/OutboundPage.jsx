@@ -4,7 +4,7 @@ import { api } from '../services/api'
 import {
   Send, Trash2, Phone, Mail, MapPin, Linkedin,
   Bot, User, Sparkles, Loader, CheckCircle, XCircle, ArrowRight,
-  MessageSquarePlus, Edit3, FileText, ChevronDown, ChevronUp, Save,
+  MessageSquarePlus, Edit3, FileText, ChevronDown, ChevronUp, Save, ArrowLeft,
 } from 'lucide-react'
 
 function ContactCard({ contact }) {
@@ -598,18 +598,20 @@ export default function OutboundPage() {
     handleExecute(editedMessage)
   }
 
+  const messages = activeThread?.messages || []
+  const [mobileShowChat, setMobileShowChat] = useState(false)
+
   function selectThread(id) {
     setActiveThreadId(id)
     setInput('')
     setExecProgress(null)
+    setMobileShowChat(true)
   }
 
-  const messages = activeThread?.messages || []
-
   return (
-    <div style={{ display: 'flex', height: '100vh' }}>
+    <div className="outbound-layout" style={{ display: 'flex', height: '100vh' }}>
       {/* ── Left sidebar: Threads ── */}
-      <div style={{
+      <div className={`outbound-sidebar ${mobileShowChat ? 'mobile-hidden' : ''}`} style={{
         width: 280, borderRight: '1px solid var(--border)', background: 'var(--card)',
         display: 'flex', flexDirection: 'column', flexShrink: 0,
       }}>
@@ -674,7 +676,7 @@ export default function OutboundPage() {
       </div>
 
       {/* ── Main chat area ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <div className={`outbound-main ${!mobileShowChat ? 'mobile-hidden' : ''}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
         {!activeThreadId ? (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
             <div style={{
@@ -733,6 +735,9 @@ export default function OutboundPage() {
               padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--card)',
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
+              <button className="mobile-back-btn icon-btn" onClick={() => setMobileShowChat(false)}>
+                <ArrowLeft size={18} />
+              </button>
               <div style={{
                 width: 32, height: 32, borderRadius: 8, background: 'var(--teal-soft)', color: 'var(--teal)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
