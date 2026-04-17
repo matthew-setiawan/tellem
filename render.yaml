@@ -30,7 +30,7 @@ services:
   - type: web
     name: tellem-ai-whatsapp
     runtime: node
-    plan: free
+    plan: starter
     buildCommand: cd whatsapp-service && npm install
     startCommand: cd whatsapp-service && node --experimental-global-webcrypto src/index.js
     envVars:
