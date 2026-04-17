@@ -1,0 +1,50 @@
+services:
+  # ── Main app: Flask API + React frontend ──
+  - type: web
+    name: tellem-ai
+    runtime: python
+    plan: free
+    buildCommand: ./render-build.sh
+    startCommand: cd backend && gunicorn "app:create_app()" --bind 0.0.0.0:$PORT --timeout 120 --workers 2
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+      - key: NODE_VERSION
+        value: "20"
+      - key: MONGO_URI
+        sync: false          # Set in Render dashboard
+      - key: MONGO_DB_NAME
+        value: tellem_ai
+      - key: PERPLEXITY_API_KEY
+        sync: false          # Set in Render dashboard
+      - key: OPENAI_API_KEY
+        sync: false          # Set in Render dashboard (optional)
+      - key: JWT_SECRET
+        generateValue: true  # Render auto-generates a secure random value
+      - key: WA_SERVICE_URL
+        sync: false          # Set to https://<whatsapp-service-name>.onrender.com after deploy
+      - key: CORS_ORIGINS
+        sync: false          # Set to https://<your-app>.onrender.com
+
+  # ── WhatsApp bridge (Baileys + Socket.IO) ──
+  - type: web
+    name: tellem-ai-whatsapp
+    runtime: node
+    plan: free
+    buildCommand: cd whatsapp-service && npm install
+    startCommand: cd whatsapp-service && node --experimental-global-webcrypto src/index.js
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: MONGO_URI
+        sync: false          # Same MongoDB URI as main app
+      - key: MONGO_DB_NAME
+        value: tellem_ai
+      - key: CORS_ORIGINS
+        sync: false          # Set to https://<your-app>.onrender.com
+      - key: BACKEND_WEBHOOK_URL
+        sync: false          # Set to https://<main-app>.onrender.com/api/webhook/inbound
+    disk:
+      name: wa-auth-data
+      mountPath: /opt/render/project/src/whatsapp-service/auth-data
+      sizeGB: 1

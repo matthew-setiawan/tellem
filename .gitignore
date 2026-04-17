@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+backend/.env
+
+# Frontend build output
+frontend/dist/
+
+# WhatsApp session data (contains credentials)
+whatsapp-service/auth-data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python virtual env
+venv/
+.venv/
